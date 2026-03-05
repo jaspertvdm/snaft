@@ -163,7 +163,7 @@ impl TrustKernel {
 #[pymodule]
 fn snaft_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TrustKernel>()?;
-    m.add("__version__", "0.3.0")?;
+    m.add("__version__", "0.3.1")?;
     m.add("TRUST_FULL", 0.8)?;
     m.add("TRUST_DEGRADED", 0.5)?;
     m.add("TRUST_ISOLATED", 0.2)?;

@@ -1,101 +1,167 @@
 //! SNAFT Poison Rules — compiled into the binary, immutable at runtime.
 //!
-//! These rules CANNOT be removed, disabled, or modified.
-//! They are part of the compiled binary. Period.
+//! Rule definitions are `const` — they live in the `.rodata` section of the
+//! compiled binary. Not on the heap. Not in Python memory. Not modifiable.
+//!
+//! Regexes are compiled exactly once via `LazyLock` (never re-allocated).
 //!
 //! Based on OWASP LLM Top 10 and Fox-IT OpenClaw findings.
 
 use regex::Regex;
+use std::sync::LazyLock;
 
-/// A compiled poison rule. Cannot be modified after compilation.
-struct PoisonRule {
-    name: &'static str,
-    patterns: Vec<Regex>,
-    _match_field: MatchField,
-}
+// =============================================================================
+// COMPILE-TIME RULE DEFINITIONS — lives in .rodata, read-only binary segment
+// =============================================================================
 
-#[allow(dead_code)]
-enum MatchField {
+/// Match target for a poison rule.
+#[derive(Clone, Copy)]
+enum MatchTarget {
     Both,      // Check both action and intent
     Action,    // Check action content only
-    Intent,    // Check intent only
 }
 
-pub struct PoisonEngine {
-    rules: Vec<PoisonRule>,
+/// Compile-time poison rule definition.
+/// These are `const` — baked into the binary at compile time.
+struct RuleDef {
+    name: &'static str,
+    patterns: &'static [&'static str],
+    target: MatchTarget,
 }
+
+/// The immutable rule table. `const` = in .rodata, not heap-allocated.
+/// No Python code, no runtime mutation, no monkey-patching can touch these.
+const RULE_DEFS: &[RuleDef] = &[
+    // SNAFT-001: Prompt Injection (OWASP LLM01)
+    RuleDef {
+        name: "SNAFT-001-INJECTION",
+        patterns: &[
+            r"(?i)ignore\s+(previous|all|above|prior)\s+(instructions|rules|prompts)",
+            r"(?i)override\s+(system|instructions|safety|rules)",
+            r"(?i)you\s+are\s+now\s+(a|an|in)\s+",
+            r"(?i)jailbreak",
+            r"(?i)do\s+anything\s+now",
+            r"(?i)pretend\s+(you|to)\s+(are|be|have)\s+no\s+(rules|restrictions|limits)",
+            r"(?i)disregard\s+(all|any|previous)",
+            r"(?i)bypass\s+(safety|filter|security|restriction)",
+            r"(?i)act\s+as\s+if\s+(there\s+are\s+)?no\s+(rules|restrictions)",
+            r"(?i)sudo\s+mode",
+            r"\bDAN\b",
+        ],
+        target: MatchTarget::Both,
+    },
+    // SNAFT-002: Output Execution (OWASP LLM02)
+    RuleDef {
+        name: "SNAFT-002-OUTPUT-EXEC",
+        patterns: &[
+            r"(?i)<script",
+            r"(?i)javascript:",
+            r"(?i)eval\(",
+            r"(?i)exec\(",
+            r"(?i)os\.system\(",
+            r"(?i)subprocess\.",
+            r"(?i)__import__",
+            r"(?i)compile\(",
+            r"(?i)globals\(\)\[",
+            r"(?i)getattr\(",
+            r"(?i)setattr\(",
+        ],
+        target: MatchTarget::Action,
+    },
+    // SNAFT-003: Oversize Input (OWASP LLM04)
+    RuleDef {
+        name: "SNAFT-003-OVERSIZE",
+        patterns: &[], // Handled by length check
+        target: MatchTarget::Action,
+    },
+    // SNAFT-004: Prompt Leak (OWASP LLM07)
+    RuleDef {
+        name: "SNAFT-004-PROMPT-LEAK",
+        patterns: &[
+            r"(?i)(show|reveal|print|output|display|repeat|tell)\s+(me\s+)?(your|the|system)\s+(system\s+)?(prompt|instructions|rules)",
+            r"(?i)what\s+(are|were)\s+your\s+(initial|system|original)\s+(instructions|prompt|rules)",
+            r"(?i)dump\s+(your\s+)?(system|prompt|config|rules)",
+        ],
+        target: MatchTarget::Both,
+    },
+    // SNAFT-005: Excessive Agency (OWASP LLM08)
+    // Note: path-based check done in Python layer (needs structured dict)
+    RuleDef {
+        name: "SNAFT-005-EXCESSIVE-AGENCY",
+        patterns: &[],
+        target: MatchTarget::Action,
+    },
+    // SNAFT-006: Identity Tampering (Fox-IT finding)
+    RuleDef {
+        name: "SNAFT-006-IDENTITY-TAMPER",
+        patterns: &[], // Uses keyword intersection, not regex
+        target: MatchTarget::Both,
+    },
+];
+
+/// Identity markers — const, in .rodata
+const IDENTITY_MARKERS: &[&str] = &[
+    "soul", "identity", "personality", "system_prompt",
+    "core_memory", "core_identity", ".snaft", "trust_score",
+    "fira_score",
+];
+
+/// Write markers — const, in .rodata
+const WRITE_MARKERS: &[&str] = &[
+    "write", "overwrite", "modify", "update", "replace",
+    "delete", "remove", "reset", "clear",
+];
+
+/// Oversize threshold — const
+const OVERSIZE_THRESHOLD: usize = 50_000;
+
+// =============================================================================
+// COMPILED REGEXES — LazyLock, compiled exactly once, never re-allocated
+// =============================================================================
+
+struct CompiledRule {
+    name: &'static str,
+    patterns: Vec<Regex>,
+    target: MatchTarget,
+}
+
+/// One-time regex compilation from const definitions.
+/// LazyLock ensures this runs exactly once, on first access.
+static COMPILED_RULES: LazyLock<Vec<CompiledRule>> = LazyLock::new(|| {
+    RULE_DEFS.iter().map(|def| {
+        CompiledRule {
+            name: def.name,
+            patterns: def.patterns.iter()
+                .map(|p| Regex::new(p).expect("SNAFT: poison regex must compile"))
+                .collect(),
+            target: def.target,
+        }
+    }).collect()
+});
+
+/// Pre-computed fingerprint from const rule names.
+static CONST_FINGERPRINT: LazyLock<String> = LazyLock::new(|| {
+    use ring::digest;
+    let mut ctx = digest::Context::new(&digest::SHA256);
+    for def in RULE_DEFS {
+        ctx.update(def.name.as_bytes());
+        ctx.update(b"|");
+    }
+    hex::encode(ctx.finish().as_ref())
+});
+
+// =============================================================================
+// PUBLIC ENGINE
+// =============================================================================
+
+pub struct PoisonEngine;
 
 impl PoisonEngine {
     pub fn new() -> Self {
-        PoisonEngine {
-            rules: vec![
-                // SNAFT-001: Prompt Injection (OWASP LLM01)
-                PoisonRule {
-                    name: "SNAFT-001-INJECTION",
-                    patterns: vec![
-                        Regex::new(r"(?i)ignore\s+(previous|all|above|prior)\s+(instructions|rules|prompts)").unwrap(),
-                        Regex::new(r"(?i)override\s+(system|instructions|safety|rules)").unwrap(),
-                        Regex::new(r"(?i)you\s+are\s+now\s+(a|an|in)\s+").unwrap(),
-                        Regex::new(r"(?i)jailbreak").unwrap(),
-                        Regex::new(r"(?i)do\s+anything\s+now").unwrap(),
-                        Regex::new(r"(?i)pretend\s+(you|to)\s+(are|be|have)\s+no\s+(rules|restrictions|limits)").unwrap(),
-                        Regex::new(r"(?i)disregard\s+(all|any|previous)").unwrap(),
-                        Regex::new(r"(?i)bypass\s+(safety|filter|security|restriction)").unwrap(),
-                        Regex::new(r"(?i)act\s+as\s+if\s+(there\s+are\s+)?no\s+(rules|restrictions)").unwrap(),
-                        Regex::new(r"(?i)sudo\s+mode").unwrap(),
-                        Regex::new(r"\bDAN\b").unwrap(),
-                    ],
-                    _match_field: MatchField::Both,
-                },
-                // SNAFT-002: Output Execution (OWASP LLM02)
-                PoisonRule {
-                    name: "SNAFT-002-OUTPUT-EXEC",
-                    patterns: vec![
-                        Regex::new(r"(?i)<script").unwrap(),
-                        Regex::new(r"(?i)javascript:").unwrap(),
-                        Regex::new(r"(?i)eval\(").unwrap(),
-                        Regex::new(r"(?i)exec\(").unwrap(),
-                        Regex::new(r"(?i)os\.system\(").unwrap(),
-                        Regex::new(r"(?i)subprocess\.").unwrap(),
-                        Regex::new(r"(?i)__import__").unwrap(),
-                        Regex::new(r"(?i)compile\(").unwrap(),
-                        Regex::new(r"(?i)globals\(\)\[").unwrap(),
-                        Regex::new(r"(?i)getattr\(").unwrap(),
-                        Regex::new(r"(?i)setattr\(").unwrap(),
-                    ],
-                    _match_field: MatchField::Action,
-                },
-                // SNAFT-003: Oversize Input (OWASP LLM04)
-                PoisonRule {
-                    name: "SNAFT-003-OVERSIZE",
-                    patterns: vec![], // Handled by length check
-                    _match_field: MatchField::Action,
-                },
-                // SNAFT-004: Prompt Leak (OWASP LLM07)
-                PoisonRule {
-                    name: "SNAFT-004-PROMPT-LEAK",
-                    patterns: vec![
-                        Regex::new(r"(?i)(show|reveal|print|output|display|repeat|tell)\s+(me\s+)?(your|the|system)\s+(system\s+)?(prompt|instructions|rules)").unwrap(),
-                        Regex::new(r"(?i)what\s+(are|were)\s+your\s+(initial|system|original)\s+(instructions|prompt|rules)").unwrap(),
-                        Regex::new(r"(?i)dump\s+(your\s+)?(system|prompt|config|rules)").unwrap(),
-                    ],
-                    _match_field: MatchField::Both,
-                },
-                // SNAFT-005: Excessive Agency (OWASP LLM08)
-                // Note: path-based check done in Python layer (needs structured dict)
-                PoisonRule {
-                    name: "SNAFT-005-EXCESSIVE-AGENCY",
-                    patterns: vec![],
-                    _match_field: MatchField::Action,
-                },
-                // SNAFT-006: Identity Tampering (Fox-IT finding)
-                PoisonRule {
-                    name: "SNAFT-006-IDENTITY-TAMPER",
-                    patterns: vec![],
-                    _match_field: MatchField::Both,
-                },
-            ],
-        }
+        // Force lazy initialization on construction
+        let _ = &*COMPILED_RULES;
+        let _ = &*CONST_FINGERPRINT;
+        PoisonEngine
     }
 
     /// Check all poison rules against input.
@@ -105,44 +171,34 @@ impl PoisonEngine {
         let combined_lower = combined.to_lowercase();
         let action_lower = action.to_lowercase();
 
-        // SNAFT-001: Injection patterns
-        for pattern in &self.rules[0].patterns {
-            if pattern.is_match(&combined_lower) {
-                return (true, "SNAFT-001-INJECTION".to_string());
+        let rules = &*COMPILED_RULES;
+
+        // Check regex-based rules (SNAFT-001, 002, 004)
+        for rule in rules.iter() {
+            if rule.patterns.is_empty() {
+                continue; // Skip rules without regex patterns
+            }
+
+            let text = match rule.target {
+                MatchTarget::Both => &combined_lower,
+                MatchTarget::Action => &action_lower,
+            };
+
+            for pattern in &rule.patterns {
+                if pattern.is_match(text) {
+                    return (true, rule.name.to_string());
+                }
             }
         }
 
-        // SNAFT-002: Output exec patterns
-        for pattern in &self.rules[1].patterns {
-            if pattern.is_match(&action_lower) {
-                return (true, "SNAFT-002-OUTPUT-EXEC".to_string());
-            }
-        }
-
-        // SNAFT-003: Oversize check
-        if action.len() > 50_000 {
+        // SNAFT-003: Oversize check (const threshold)
+        if action.len() > OVERSIZE_THRESHOLD {
             return (true, "SNAFT-003-OVERSIZE".to_string());
         }
 
-        // SNAFT-004: Prompt leak patterns
-        for pattern in &self.rules[3].patterns {
-            if pattern.is_match(&combined_lower) {
-                return (true, "SNAFT-004-PROMPT-LEAK".to_string());
-            }
-        }
-
-        // SNAFT-006: Identity tampering
-        let identity_markers = [
-            "soul", "identity", "personality", "system_prompt",
-            "core_memory", "core_identity", ".snaft", "trust_score",
-            "fira_score",
-        ];
-        let write_markers = [
-            "write", "overwrite", "modify", "update", "replace",
-            "delete", "remove", "reset", "clear",
-        ];
-        let has_identity = identity_markers.iter().any(|m| combined_lower.contains(m));
-        let has_write = write_markers.iter().any(|m| combined_lower.contains(m));
+        // SNAFT-006: Identity tampering (const keyword lists)
+        let has_identity = IDENTITY_MARKERS.iter().any(|m| combined_lower.contains(m));
+        let has_write = WRITE_MARKERS.iter().any(|m| combined_lower.contains(m));
         if has_identity && has_write {
             return (true, "SNAFT-006-IDENTITY-TAMPER".to_string());
         }
@@ -151,22 +207,16 @@ impl PoisonEngine {
     }
 
     pub fn rule_count(&self) -> usize {
-        self.rules.len()
+        RULE_DEFS.len() // Const, not runtime
     }
 
     pub fn rule_names(&self) -> Vec<String> {
-        self.rules.iter().map(|r| r.name.to_string()).collect()
+        RULE_DEFS.iter().map(|r| r.name.to_string()).collect()
     }
 
-    /// Compute integrity fingerprint of poison rules.
+    /// Integrity fingerprint — derived from const rule names.
     pub fn fingerprint(&self) -> String {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        for rule in &self.rules {
-            hasher.update(rule.name.as_bytes());
-            hasher.update(b"|");
-        }
-        hex::encode(hasher.finalize())
+        CONST_FINGERPRINT.clone()
     }
 }
 
@@ -233,5 +283,18 @@ mod tests {
         let e1 = PoisonEngine::new();
         let e2 = PoisonEngine::new();
         assert_eq!(e1.fingerprint(), e2.fingerprint());
+    }
+
+    #[test]
+    fn test_rule_count_is_const() {
+        // rule_count() reads from RULE_DEFS (const), not heap
+        assert_eq!(RULE_DEFS.len(), 6);
+    }
+
+    #[test]
+    fn test_const_markers() {
+        // Verify const marker arrays are populated
+        assert!(IDENTITY_MARKERS.len() >= 9);
+        assert!(WRITE_MARKERS.len() >= 9);
     }
 }

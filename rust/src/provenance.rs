@@ -1,21 +1,21 @@
-//! Provenance Token Signing — HMAC-SHA256 in compiled Rust.
+//! Provenance Token Signing — ring (BoringSSL) HMAC-SHA256 in compiled Rust.
 //!
 //! Token signatures are computed here, not in Python.
 //! The signing key never touches Python memory.
+//!
+//! Uses Google's `ring` crate (BoringSSL-based) for HMAC-SHA256.
+//! More audited, faster, and more battle-tested than pure-Rust alternatives.
 
-use hmac::{Hmac, Mac};
-use sha2::{Sha256, Digest};
-
-type HmacSha256 = Hmac<Sha256>;
+use ring::{digest, hmac};
 
 pub struct TokenSigner {
-    key: Vec<u8>,
+    key: hmac::Key,
 }
 
 impl TokenSigner {
     pub fn new(secret: &str) -> Self {
         TokenSigner {
-            key: secret.as_bytes().to_vec(),
+            key: hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes()),
         }
     }
 
@@ -38,20 +38,15 @@ impl TokenSigner {
             erin, eraan, eromheen, erachter
         );
 
-        let mut mac = HmacSha256::new_from_slice(&self.key)
-            .expect("HMAC key length is always valid");
-        mac.update(payload.as_bytes());
-        let result = mac.finalize();
-        let full_hex = hex::encode(result.into_bytes());
+        let tag = hmac::sign(&self.key, payload.as_bytes());
+        let full_hex = hex::encode(tag.as_ref());
         full_hex[..24].to_string()
     }
 
     /// Hash content deterministically. Returns first 16 hex chars of SHA-256.
     pub fn hash_content(&self, content: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        let result = hasher.finalize();
-        let full_hex = hex::encode(result);
+        let hash = digest::digest(&digest::SHA256, content.as_bytes());
+        let full_hex = hex::encode(hash.as_ref());
         full_hex[..16].to_string()
     }
 }
