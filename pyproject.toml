@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "snaft"
+version = "0.1.0"
+description = "Semantic Network-Aware Firewall for Trust — behavioral firewall for AI agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Jasper van de Meent", email = "jasper@humotica.nl"},
+]
+keywords = [
+    "ai", "security", "firewall", "trust", "behavioral",
+    "owasp", "llm", "agents", "provenance", "tibet",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking :: Firewalls",
+]
+
+[project.urls]
+Homepage = "https://github.com/jaspertvdm/snaft"
+Documentation = "https://github.com/jaspertvdm/snaft#readme"
+Repository = "https://github.com/jaspertvdm/snaft"
+Issues = "https://github.com/jaspertvdm/snaft/issues"
+
+[project.scripts]
+snaft = "snaft.cli:main"
+
+[tool.hatch.build.targets.sdist]
+include = ["/snaft"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["snaft"]
