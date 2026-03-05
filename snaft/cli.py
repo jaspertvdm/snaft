@@ -30,6 +30,7 @@ import time
 from typing import List, Optional
 
 from . import __version__
+from .compliance import AuditCategory, ComplianceEngine, RiskLevel
 from .firewall import Action, Firewall, Rule
 from .identity import AgentIdentity
 from .storage import Storage
@@ -175,6 +176,19 @@ def cmd_status(args):
     print(f"  Rules:          {s['rules_custom']} custom + {s['rules_core']} core (immutable)")
     print(f"  Provenance:     {s['provenance_depth']} tokens in chain")
     print(f"  Storage:        {storage.storage_dir}")
+
+    # Compliance
+    comp = s.get("compliance")
+    if comp and comp.get("enabled"):
+        print()
+        print(f"  {_bold('EU AI Act Compliance:')}")
+        print(f"    Status:       {_success('active')}")
+        print(f"    Risk level:   {_warn(comp['risk_level'])}")
+        print(f"    Retention:    {comp['retention_days']} days {_dim('(Art. 26 min: 180)')}")
+        print(f"    Records:      {comp['audit_records']}")
+        print(f"    Regulation:   {_dim(comp['eu_ai_act'])}")
+        print(f"    Enforcement:  {_dim(comp['enforcement'])}")
+
     print()
 
     # Agents
@@ -451,6 +465,111 @@ def cmd_agent_reinstate(args):
     print(f"  Token:     {token.token_id}")
 
 
+def cmd_audit_summary(args):
+    """Show audit compliance summary."""
+    fw, storage = _load_firewall(args.storage_dir)
+    comp = fw.compliance
+
+    if not comp:
+        print(_dim("Compliance engine not enabled."))
+        return
+
+    print()
+    print(f"  {_bold('SNAFT EU AI Act Compliance Summary')}")
+    print(f"  {_dim('Regulation (EU) 2024/1689 — Enforcement: 2 August 2026')}")
+    print()
+    print(f"  Risk level:     {_warn(comp.risk_level.value)}")
+    print(f"  Retention:      {comp.retention_days} days {_dim('(Art. 26 minimum: 180)')}")
+    print(f"  Audit records:  {comp.record_count}")
+    print()
+
+    if comp.record_count == 0:
+        print(f"  {_dim('No audit records yet. Records are generated automatically on every evaluate().')}")
+        print()
+        return
+
+    # Summary stats
+    records = comp.get_records()
+    categories = {}
+    for r in records:
+        categories[r.category] = categories.get(r.category, 0) + 1
+
+    print(f"  {_bold('Records by category:')}")
+    for cat, count in sorted(categories.items()):
+        print(f"    {cat:20s}  {count}")
+    print()
+
+    # Show applicable articles
+    articles_seen = set()
+    for r in records:
+        for a in r.articles:
+            articles_seen.add(a)
+
+    if articles_seen:
+        print(f"  {_bold('EU AI Act articles covered:')}")
+        for a in sorted(articles_seen):
+            print(f"    {_success('*')} {a}")
+        print()
+
+
+def cmd_audit_export(args):
+    """Export compliance audit records."""
+    fw, storage = _load_firewall(args.storage_dir)
+    comp = fw.compliance
+
+    if not comp:
+        print(_error("Compliance engine not enabled."), file=sys.stderr)
+        return 1
+
+    if comp.record_count == 0:
+        print(_dim("No audit records to export."), file=sys.stderr)
+        return 1
+
+    if args.format == "csv":
+        output = comp.export_csv_header() + "\n"
+        output += "\n".join(comp.export_csv_rows())
+    else:
+        output = comp.export_json()
+
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(output)
+        print(_success(f"Exported {comp.record_count} audit records to {args.output}"))
+    else:
+        print(output)
+
+
+def cmd_audit_verify(args):
+    """Verify audit record integrity."""
+    fw, storage = _load_firewall(args.storage_dir)
+    comp = fw.compliance
+
+    if not comp:
+        print(_error("Compliance engine not enabled."), file=sys.stderr)
+        return 1
+
+    records = comp.get_records()
+    if not records:
+        print(_dim("No audit records to verify."))
+        return
+
+    passed = 0
+    failed = 0
+    for r in records:
+        if comp.verify_record(r):
+            passed += 1
+        else:
+            failed += 1
+            print(_error(f"  TAMPERED: {r.record_id} ({r.timestamp_iso})"))
+
+    print()
+    if failed == 0:
+        print(_success(f"  All {passed} audit records verified — integrity intact"))
+    else:
+        print(_error(f"  {failed} tampered records detected out of {passed + failed}"))
+    print()
+
+
 def cmd_version(args):
     """Show version info."""
     from .kernel import TrustKernel
@@ -600,6 +719,20 @@ def build_parser() -> argparse.ArgumentParser:
     agent_re = agent_sub.add_parser("reinstate", help="Reinstate an isolated agent", parents=[parent])
     agent_re.add_argument("name", help="Agent name")
 
+    # audit (EU AI Act compliance)
+    audit_parser = sub.add_parser("audit", help="EU AI Act compliance audit")
+    audit_sub = audit_parser.add_subparsers(dest="audit_command")
+
+    audit_sub.add_parser("summary", help="Show compliance summary", parents=[parent])
+
+    audit_export = audit_sub.add_parser("export", help="Export audit records", parents=[parent])
+    audit_export.add_argument("--format", choices=["json", "csv"], default="json",
+                              help="Export format (default: json)")
+    audit_export.add_argument("--output", "-o", default=None,
+                              help="Output file (default: stdout)")
+
+    audit_sub.add_parser("verify", help="Verify audit record integrity", parents=[parent])
+
     # version
     sub.add_parser("version", help="Show version info")
 
@@ -667,6 +800,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_agent_reinstate(args) or 0
         else:
             print("Usage: snaft agent {list|show|isolate|reinstate}")
+            return 1
+
+    # Audit subcommands (EU AI Act compliance)
+    if args.command == "audit":
+        if args.audit_command == "summary":
+            return cmd_audit_summary(args) or 0
+        elif args.audit_command == "export":
+            return cmd_audit_export(args) or 0
+        elif args.audit_command == "verify":
+            return cmd_audit_verify(args) or 0
+        else:
+            print("Usage: snaft audit {summary|export|verify}")
             return 1
 
     parser.print_help()

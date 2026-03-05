@@ -33,8 +33,9 @@ Or with full agent identity:
     allowed, token, trust = fw.evaluate(agent, "read_file", "load config")
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
+from .compliance import AuditCategory, AuditRecord, ComplianceEngine, RiskLevel
 from .firewall import Action, Firewall, Rule
 from .identity import (
     AgentIdentity,
@@ -68,6 +69,11 @@ __all__ = [
     # Provenance
     "ProvenanceToken",
     "ProvenanceChain",
+    # Compliance (EU AI Act)
+    "ComplianceEngine",
+    "AuditRecord",
+    "AuditCategory",
+    "RiskLevel",
     # Storage
     "Storage",
 ]

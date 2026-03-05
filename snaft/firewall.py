@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .compliance import AuditCategory, ComplianceEngine
 from .identity import AgentIdentity, AgentState, TRUST_ISOLATED
 from .kernel import TrustKernel
 from .provenance import ProvenanceChain, ProvenanceToken
@@ -258,6 +259,9 @@ class Firewall:
         default_policy: str = "deny",
         fail_mode: str = "closed",
         secret_key: str = "snaft-default-key",
+        system_id: str = "snaft-firewall",
+        compliance_enabled: bool = True,
+        storage_dir: Optional[str] = None,
     ):
         self._rules: List[Rule] = []
         self._agents: Dict[str, AgentIdentity] = {}
@@ -268,6 +272,13 @@ class Firewall:
 
         # Initialize Trust Kernel (Rust if available, Python fallback)
         self._kernel = TrustKernel(secret_key=secret_key)
+
+        # EU AI Act compliance engine
+        self._compliance_enabled = compliance_enabled
+        self._compliance = ComplianceEngine(
+            system_id=system_id,
+            storage_dir=storage_dir,
+        ) if compliance_enabled else None
 
         # Load poison rules — always, silently, immutably
         for rule in _POISON_RULES:
@@ -417,6 +428,7 @@ class Firewall:
                 eromheen=context,
                 parent_token=parent_token,
             )
+            self._audit(token, AuditCategory.INTEGRITY)
             return False, token, 0.0
 
         # Auto-register agent if needed
@@ -435,6 +447,7 @@ class Firewall:
                 eromheen=context,
                 parent_token=parent_token,
             )
+            self._audit(token)
             return False, token, 0.0
 
         if agent.is_isolated:
@@ -448,6 +461,7 @@ class Firewall:
                 eromheen=context,
                 parent_token=parent_token,
             )
+            self._audit(token)
             return False, token, agent.trust_score
 
         # Record intent for behavioral analysis
@@ -458,6 +472,7 @@ class Firewall:
             if rule.matches(agent.name, action, intent, context):
                 if rule.action == Action.BLOCK:
                     # BLOCKED — penalize trust
+                    old_trust = agent.trust_score
                     new_trust = agent.penalize(severity=0.1)
                     token = self._provenance.mint(
                         agent_id=agent.name,
@@ -469,12 +484,14 @@ class Firewall:
                         eromheen=context,
                         parent_token=parent_token,
                     )
+                    self._audit_decision(token, old_trust, new_trust, agent)
 
                     # Auto-isolate on critical threshold
                     if new_trust < TRUST_ISOLATED:
+                        old_state = agent.state.value
                         agent.isolate(reason=f"Trust below threshold after {rule.name}")
                         # Mint isolation token
-                        self._provenance.mint(
+                        iso_token = self._provenance.mint(
                             agent_id=agent.name,
                             action="ISOLATE",
                             rule_name="AUTO_ISOLATE",
@@ -484,11 +501,13 @@ class Firewall:
                             eromheen=context,
                             parent_token=token,
                         )
+                        self._audit_state(iso_token, old_state, agent.state.value)
 
                     return False, token, new_trust
 
                 elif rule.action == Action.WARN:
                     # WARNED — soft penalty, but allow
+                    old_trust = agent.trust_score
                     new_trust = agent.warn()
                     token = self._provenance.mint(
                         agent_id=agent.name,
@@ -500,10 +519,12 @@ class Firewall:
                         eromheen=context,
                         parent_token=parent_token,
                     )
+                    self._audit_decision(token, old_trust, new_trust, agent)
                     return True, token, new_trust
 
                 elif rule.action == Action.ALLOW:
                     # Explicit ALLOW rule matched
+                    old_trust = agent.trust_score
                     new_trust = agent.reward()
                     token = self._provenance.mint(
                         agent_id=agent.name,
@@ -515,10 +536,12 @@ class Firewall:
                         eromheen=context,
                         parent_token=parent_token,
                     )
+                    self._audit_decision(token, old_trust, new_trust, agent)
                     return True, token, new_trust
 
         # No rule matched — apply default policy
         if self._default_policy == "deny":
+            old_trust = agent.trust_score
             new_trust = agent.penalize(severity=0.05)
             token = self._provenance.mint(
                 agent_id=agent.name,
@@ -530,8 +553,10 @@ class Firewall:
                 eromheen=context,
                 parent_token=parent_token,
             )
+            self._audit_decision(token, old_trust, new_trust, agent)
             return False, token, new_trust
         else:
+            old_trust = agent.trust_score
             new_trust = agent.reward(amount=0.01)
             token = self._provenance.mint(
                 agent_id=agent.name,
@@ -543,7 +568,39 @@ class Firewall:
                 eromheen=context,
                 parent_token=parent_token,
             )
+            self._audit_decision(token, old_trust, new_trust, agent)
             return True, token, new_trust
+
+    # =========================================================================
+    # COMPLIANCE — EU AI Act audit recording
+    # =========================================================================
+
+    def _audit(self, token: ProvenanceToken,
+               category: AuditCategory = AuditCategory.DECISION) -> None:
+        """Record a compliance audit entry if compliance is enabled."""
+        if self._compliance:
+            self._compliance.record(token, category)
+
+    def _audit_decision(self, token: ProvenanceToken,
+                        old_trust: float, new_trust: float,
+                        agent: AgentIdentity) -> None:
+        """Record a decision with trust change tracking."""
+        if not self._compliance:
+            return
+        self._compliance.record(token)
+        if abs(old_trust - new_trust) > 0.001:
+            self._compliance.record_trust_change(token, old_trust, new_trust)
+
+    def _audit_state(self, token: ProvenanceToken,
+                     old_state: str, new_state: str) -> None:
+        """Record an agent state transition."""
+        if self._compliance:
+            self._compliance.record_state_change(token, old_state, new_state)
+
+    @property
+    def compliance(self) -> Optional[ComplianceEngine]:
+        """Access the compliance engine (None if disabled)."""
+        return self._compliance
 
     # =========================================================================
     # CONVENIENCE METHODS
@@ -629,6 +686,17 @@ class Firewall:
                 "blocked": agent.blocked_actions,
             }
 
+        compliance_status = None
+        if self._compliance:
+            compliance_status = {
+                "enabled": True,
+                "risk_level": self._compliance.risk_level.value,
+                "retention_days": self._compliance.retention_days,
+                "audit_records": self._compliance.record_count,
+                "eu_ai_act": "Regulation (EU) 2024/1689",
+                "enforcement": "2026-08-02",
+            }
+
         return {
             "enabled": self._enabled,
             "default_policy": self._default_policy,
@@ -638,5 +706,6 @@ class Firewall:
             "rules_custom": len([r for r in self._rules if not r._poison]),
             "rules_core": len([r for r in self._rules if r._poison]),
             "provenance_depth": self._provenance.depth,
+            "compliance": compliance_status,
             "agents": agents_status,
         }
