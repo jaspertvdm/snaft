@@ -33,7 +33,7 @@ Or with full agent identity:
     allowed, token, trust = fw.evaluate(agent, "read_file", "load config")
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .firewall import Action, Firewall, Rule
 from .identity import (
