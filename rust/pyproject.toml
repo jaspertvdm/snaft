@@ -1,0 +1,39 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "snaft-core"
+version = "0.3.0"
+description = "SNAFT Trust Kernel — compiled Rust core for the AI behavioral firewall"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Jasper van de Meent", email = "jasper@humotica.com"},
+]
+keywords = [
+    "ai", "security", "firewall", "trust", "rust",
+    "owasp", "llm", "agents", "snaft",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/jaspertvdm/snaft"
+Repository = "https://github.com/jaspertvdm/snaft"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

@@ -165,6 +165,13 @@ def cmd_status(args):
 
     print(f"  Default policy: {_warn(s['default_policy'])}")
     print(f"  Fail mode:      {s['fail_mode']}")
+
+    backend = s.get("kernel_backend", "python")
+    if backend == "rust":
+        print(f"  Kernel:         {_success('rust')} {_dim('(compiled, tamper-resistant)')}")
+    else:
+        print(f"  Kernel:         {_warn('python')} {_dim('(fallback — install snaft-core for Rust)')}")
+
     print(f"  Rules:          {s['rules_custom']} custom + {s['rules_core']} core (immutable)")
     print(f"  Provenance:     {s['provenance_depth']} tokens in chain")
     print(f"  Storage:        {storage.storage_dir}")
@@ -446,7 +453,10 @@ def cmd_agent_reinstate(args):
 
 def cmd_version(args):
     """Show version info."""
+    from .kernel import TrustKernel
+    k = TrustKernel()
     print(f"snaft {__version__}")
+    print(f"kernel: {k.backend}")
     print("Semantic Network-Aware Firewall for Trust")
     print("Not a guardrail. An immune system.")
 

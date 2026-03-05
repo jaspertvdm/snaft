@@ -1,0 +1,20 @@
+[package]
+name = "snaft-core"
+version = "0.3.0"
+edition = "2021"
+description = "SNAFT Trust Kernel — Rust core for the AI behavioral firewall"
+license = "MIT"
+authors = ["Jasper van de Meent <jasper@humotica.com>"]
+
+[lib]
+name = "snaft_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

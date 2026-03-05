@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .identity import AgentIdentity, AgentState, TRUST_ISOLATED
+from .kernel import TrustKernel
 from .provenance import ProvenanceChain, ProvenanceToken
 
 
@@ -265,6 +266,9 @@ class Firewall:
         self._provenance = ProvenanceChain(secret_key=secret_key)
         self._enabled = True
 
+        # Initialize Trust Kernel (Rust if available, Python fallback)
+        self._kernel = TrustKernel(secret_key=secret_key)
+
         # Load poison rules — always, silently, immutably
         for rule in _POISON_RULES:
             self._rules.append(rule)
@@ -282,13 +286,22 @@ class Firewall:
     def _verify_integrity(self) -> bool:
         """Verify poison rules have not been tampered with at runtime.
 
+        When Rust kernel is active, delegates to compiled integrity check.
+        Falls back to Python-level checks otherwise.
+
         Checks:
-        1. Module-level _POISON_RULES list hasn't changed (fingerprint)
-        2. All poison rules are still present in self._rules
-        3. No poison rule properties have been mutated
+        1. Rust kernel integrity (if available)
+        2. Module-level _POISON_RULES list hasn't changed (fingerprint)
+        3. All poison rules are still present in self._rules
+        4. No poison rule properties have been mutated
 
         If ANY check fails, the firewall enters permanent lockdown.
         """
+        # Check 0: Rust kernel integrity (compiled tamper detection)
+        if not self._kernel.verify_integrity():
+            self._tampered = True
+            return False
+
         # Check 1: Module-level poison rules unchanged
         if _compute_poison_fingerprint() != self._poison_fingerprint:
             self._tampered = True
@@ -620,6 +633,7 @@ class Firewall:
             "enabled": self._enabled,
             "default_policy": self._default_policy,
             "fail_mode": self._fail_mode,
+            "kernel_backend": self._kernel.backend,
             "rules_total": len(self._rules),
             "rules_custom": len([r for r in self._rules if not r._poison]),
             "rules_core": len([r for r in self._rules if r._poison]),
