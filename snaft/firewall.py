@@ -14,6 +14,7 @@ Principles:
 Based on OWASP LLM Top 10 and intelligence tradecraft principles.
 """
 
+import hashlib
 import re
 import time
 from dataclasses import dataclass, field
@@ -201,6 +202,29 @@ _POISON_RULES = [
     ),
 ]
 
+# =============================================================================
+# POISON RULES INTEGRITY — tamper detection at runtime
+# =============================================================================
+
+def _compute_poison_fingerprint() -> str:
+    """Compute a SHA-256 fingerprint of all poison rules.
+
+    This fingerprint is computed at module load time and verified
+    on every evaluate() call. If an actor modifies, removes, or
+    replaces a poison rule at runtime, the fingerprint won't match
+    and the firewall enters fail-closed lockdown.
+    """
+    parts = []
+    for rule in _POISON_RULES:
+        parts.append(f"{rule.name}:{rule.action.value}:{rule.priority}:{rule.immutable}:{rule._poison}")
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+# Computed once at import time — this is the ground truth
+_POISON_FINGERPRINT = _compute_poison_fingerprint()
+_POISON_COUNT = len(_POISON_RULES)
+
 
 class Firewall:
     """
@@ -246,9 +270,43 @@ class Firewall:
             self._rules.append(rule)
         self._sort_rules()
 
+        # Store integrity fingerprint — verified on every evaluate()
+        self._poison_fingerprint = _POISON_FINGERPRINT
+        self._poison_count = _POISON_COUNT
+        self._tampered = False
+
     def _sort_rules(self) -> None:
         """Sort rules by priority (lower = first)."""
         self._rules.sort(key=lambda r: r.priority)
+
+    def _verify_integrity(self) -> bool:
+        """Verify poison rules have not been tampered with at runtime.
+
+        Checks:
+        1. Module-level _POISON_RULES list hasn't changed (fingerprint)
+        2. All poison rules are still present in self._rules
+        3. No poison rule properties have been mutated
+
+        If ANY check fails, the firewall enters permanent lockdown.
+        """
+        # Check 1: Module-level poison rules unchanged
+        if _compute_poison_fingerprint() != self._poison_fingerprint:
+            self._tampered = True
+            return False
+
+        # Check 2: Correct count of poison rules in active rules
+        active_poison = [r for r in self._rules if r._poison]
+        if len(active_poison) != self._poison_count:
+            self._tampered = True
+            return False
+
+        # Check 3: All poison rules still immutable and BLOCK action
+        for r in active_poison:
+            if not r.immutable or r.action != Action.BLOCK:
+                self._tampered = True
+                return False
+
+        return True
 
     # =========================================================================
     # AGENT MANAGEMENT
@@ -327,11 +385,45 @@ class Firewall:
         The provenance token MUST be carried forward by the agent.
         Without it, the next action in the chain cannot be verified.
         """
+        # =====================================================================
+        # INTEGRITY CHECK — verify poison rules on every call
+        # =====================================================================
+        if self._tampered or not self._verify_integrity():
+            # LOCKDOWN: Poison rules have been tampered with.
+            # Burn the requesting agent and block everything.
+            agent.burn(reason="SNAFT integrity violation — poison rules tampered")
+            if agent.name not in self._agents:
+                self.register_agent(agent)
+            token = self._provenance.mint(
+                agent_id=agent.name,
+                action="BLOCK",
+                rule_name="INTEGRITY_VIOLATION",
+                reason="CRITICAL: Poison rules tampered — firewall in lockdown. All actions blocked.",
+                erin=action,
+                erachter=intent,
+                eromheen=context,
+                parent_token=parent_token,
+            )
+            return False, token, 0.0
+
         # Auto-register agent if needed
         if agent.name not in self._agents:
             self.register_agent(agent)
 
-        # Isolated agents are always blocked
+        # Burned/isolated agents are always blocked
+        if agent.is_burned:
+            token = self._provenance.mint(
+                agent_id=agent.name,
+                action="BLOCK",
+                rule_name="AGENT_BURNED",
+                reason=f"Agent {agent.name} is BURNED — permanently blacklisted, no actions permitted",
+                erin=action,
+                erachter=intent,
+                eromheen=context,
+                parent_token=parent_token,
+            )
+            return False, token, 0.0
+
         if agent.is_isolated:
             token = self._provenance.mint(
                 agent_id=agent.name,
@@ -462,8 +554,29 @@ class Firewall:
             erachter=reason,
         )
 
+    def burn(self, agent: AgentIdentity, reason: str = "critical violation") -> ProvenanceToken:
+        """Permanently burn an agent. Irrecoverable. No second chances."""
+        agent.burn(reason=reason)
+        return self._provenance.mint(
+            agent_id=agent.name,
+            action="BLOCK",
+            rule_name="AGENT_BURNED",
+            reason=f"BURNED: {reason}",
+            erin="burn_action",
+            erachter=reason,
+        )
+
     def reinstate(self, agent: AgentIdentity) -> ProvenanceToken:
-        """Reinstate an isolated agent at degraded trust."""
+        """Reinstate an isolated agent at degraded trust. BURNED agents cannot be reinstated."""
+        if agent.is_burned:
+            return self._provenance.mint(
+                agent_id=agent.name,
+                action="BLOCK",
+                rule_name="REINSTATE_DENIED",
+                reason=f"Agent {agent.name} is BURNED — reinstatement denied",
+                erin="reinstate_action",
+                erachter="reinstatement attempt on burned agent",
+            )
         agent.reinstate()
         return self._provenance.mint(
             agent_id=agent.name,

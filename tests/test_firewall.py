@@ -284,6 +284,132 @@ class TestTrustDegradation:
 
 
 # =============================================================================
+# BURNED STATE
+# =============================================================================
+
+class TestBurnedState:
+
+    def test_burned_agent_always_blocked(self):
+        """BURNED agents are permanently blocked."""
+        fw = Firewall(default_policy="allow")
+        agent = AgentIdentity(name="bad-actor")
+        fw.register_agent(agent)
+
+        fw.burn(agent, reason="data exfiltration attempt")
+        assert agent.is_burned
+        assert agent.trust_score == 0.0
+
+        allowed, token, trust = fw.evaluate(agent, "read_file", "innocent read")
+        assert not allowed
+        assert token.rule_name == "AGENT_BURNED"
+        assert trust == 0.0
+
+    def test_burned_agent_cannot_be_reinstated(self):
+        """BURNED is permanent. No second chances."""
+        fw = Firewall()
+        agent = AgentIdentity(name="traitor")
+        fw.register_agent(agent)
+
+        fw.burn(agent, reason="critical violation")
+        token = fw.reinstate(agent)
+
+        # Should still be burned
+        assert agent.is_burned
+        assert agent.trust_score == 0.0
+        assert token.rule_name == "REINSTATE_DENIED"
+
+    def test_burn_zeros_all_fira(self):
+        """Burn sets all FIR/A components to worst values."""
+        agent = AgentIdentity(name="test")
+        agent.fira.integrity = 0.9
+        agent.fira.frequency = 0.8
+        agent.fira.recency = 1.0
+        agent.fira.anomaly = 0.0
+
+        agent.burn()
+        assert agent.fira.integrity == 0.0
+        assert agent.fira.frequency == 0.0
+        assert agent.fira.recency == 0.0
+        assert agent.fira.anomaly == 1.0
+        assert agent.trust_score == 0.0
+
+    def test_isolate_cannot_override_burned(self):
+        """Cannot un-burn by calling isolate."""
+        agent = AgentIdentity(name="test")
+        agent.burn()
+        agent.isolate()  # Should be no-op
+        assert agent.is_burned
+        assert agent.state.value == "burned"
+
+
+# =============================================================================
+# INTEGRITY VERIFICATION
+# =============================================================================
+
+class TestIntegrityVerification:
+
+    def test_normal_operation_passes_integrity(self):
+        """Normal operation passes integrity check."""
+        fw = Firewall()
+        allowed, token, _ = fw.check("agent", "read", "normal read")
+        # Should work fine — no tampering
+        assert token.rule_name != "INTEGRITY_VIOLATION"
+
+    def test_tampered_poison_rules_detected(self):
+        """Tampering with poison rules triggers lockdown."""
+        fw = Firewall()
+
+        # Simulate tampering: remove a poison rule from the rules list
+        fw._rules = [r for r in fw._rules if r.name != "SNAFT-001-INJECTION"]
+
+        # Next evaluate should detect the tamper
+        agent = AgentIdentity(name="innocent")
+        allowed, token, trust = fw.evaluate(agent, "read", "normal read")
+
+        assert not allowed
+        assert token.rule_name == "INTEGRITY_VIOLATION"
+        assert trust == 0.0
+        assert agent.is_burned
+
+    def test_tampered_flag_persists(self):
+        """Once tampered, the flag persists (lockdown is permanent)."""
+        fw = Firewall()
+
+        # Tamper
+        fw._rules = [r for r in fw._rules if r.name != "SNAFT-001-INJECTION"]
+        fw.check("agent-1", "read", "trigger detection")
+
+        # Even after "fixing" the rules, tampered flag stays
+        assert fw._tampered
+
+        # Restore the rules
+        from snaft.firewall import _POISON_RULES
+        for rule in _POISON_RULES:
+            if rule not in fw._rules:
+                fw._rules.append(rule)
+
+        # Still locked down
+        allowed, token, _ = fw.check("agent-2", "read", "normal")
+        assert not allowed
+        assert token.rule_name == "INTEGRITY_VIOLATION"
+
+    def test_mutated_poison_rule_action_detected(self):
+        """Changing a poison rule's action is detected."""
+        fw = Firewall()
+
+        # Find a poison rule and change its action
+        for r in fw._rules:
+            if r._poison:
+                r.action = Action.ALLOW  # Tamper!
+                break
+
+        agent = AgentIdentity(name="test")
+        allowed, token, _ = fw.evaluate(agent, "read", "test")
+        assert not allowed
+        assert token.rule_name == "INTEGRITY_VIOLATION"
+
+
+# =============================================================================
 # PROVENANCE
 # =============================================================================
 

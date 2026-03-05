@@ -22,6 +22,7 @@ class AgentState(Enum):
     ACTIVE = "active"           # Normal operation
     DEGRADED = "degraded"       # Trust below threshold, limited actions
     ISOLATED = "isolated"       # Quarantined — no actions permitted
+    BURNED = "burned"           # Permanently blacklisted — trust irrecoverable
     UNKNOWN = "unknown"         # New agent, no trust history
 
 
@@ -91,7 +92,11 @@ class AgentIdentity:
 
     @property
     def is_isolated(self) -> bool:
-        return self.state == AgentState.ISOLATED
+        return self.state in (AgentState.ISOLATED, AgentState.BURNED)
+
+    @property
+    def is_burned(self) -> bool:
+        return self.state == AgentState.BURNED
 
     @property
     def is_active(self) -> bool:
@@ -164,10 +169,21 @@ class AgentIdentity:
 
     def isolate(self, reason: str = "trust threshold breached") -> None:
         """Force-isolate this agent."""
-        self.state = AgentState.ISOLATED
+        if self.state != AgentState.BURNED:  # Can't un-burn
+            self.state = AgentState.ISOLATED
+
+    def burn(self, reason: str = "critical violation") -> None:
+        """Permanently burn this agent. Irrecoverable. Trust goes to zero."""
+        self.state = AgentState.BURNED
+        self.fira.integrity = 0.0
+        self.fira.frequency = 0.0
+        self.fira.recency = 0.0
+        self.fira.anomaly = 1.0
 
     def reinstate(self, new_trust: float = TRUST_DEGRADED) -> None:
-        """Reinstate an isolated agent at degraded trust."""
+        """Reinstate an isolated agent at degraded trust. BURNED agents cannot be reinstated."""
+        if self.state == AgentState.BURNED:
+            return  # Burned is permanent. No second chances.
         if self.state == AgentState.ISOLATED:
             self.state = AgentState.DEGRADED
             self.fira.integrity = new_trust
@@ -204,6 +220,7 @@ class AgentIdentity:
             AgentState.ACTIVE: "\u2705",
             AgentState.DEGRADED: "\u26a0\ufe0f",
             AgentState.ISOLATED: "\U0001f6a8",
+            AgentState.BURNED: "\U0001f525",
             AgentState.UNKNOWN: "\u2753",
         }.get(self.state, "?")
         return f"{state_icon} {self.name} [trust={self.trust_score:.2f} state={self.state.value}]"

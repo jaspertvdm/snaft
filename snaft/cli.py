@@ -176,14 +176,7 @@ def cmd_status(args):
         for name, info in s["agents"].items():
             state = info["state"]
             trust = info["trust"]
-            if state == "active":
-                state_str = _success(state)
-            elif state == "degraded":
-                state_str = _warn(state)
-            elif state == "isolated":
-                state_str = _error(state)
-            else:
-                state_str = _dim(state)
+            state_str = _state_colored(state)
 
             trust_bar = _trust_bar(trust)
             print(f"    {name:20s}  {state_str:10s}  trust={trust:.2f} {trust_bar}  "
@@ -353,16 +346,7 @@ def cmd_agent_list(args):
     print(f"  {_bold('Registered Agents')}:")
     print()
     for name, agent in fw._agents.items():
-        state = agent.state.value
-        if state == "active":
-            state_str = _success(state)
-        elif state == "degraded":
-            state_str = _warn(state)
-        elif state == "isolated":
-            state_str = _error(state)
-        else:
-            state_str = _dim(state)
-
+        state_str = _state_colored(agent.state.value)
         trust = agent.trust_score
         trust_bar = _trust_bar(trust)
         print(f"  {name:20s}  {state_str:10s}  trust={trust:.4f} {trust_bar}")
@@ -417,6 +401,27 @@ def cmd_agent_isolate(args):
     print(f"  Token:  {token.token_id}")
 
 
+def cmd_agent_burn(args):
+    """Permanently burn an agent. No second chances."""
+    fw, storage = _load_firewall(args.storage_dir)
+
+    agent = fw.get_agent(args.name)
+    if not agent:
+        print(_error(f"Agent not found: {args.name}"))
+        return 1
+
+    reason = args.reason or "manual burn via CLI"
+    token = fw.burn(agent, reason=reason)
+    _save_state(fw, storage)
+    storage.append_log(token.to_dict())
+
+    print(_colored(f"Agent BURNED: {args.name}", C.RED + C.BOLD))
+    print(f"  Reason:  {reason}")
+    print(f"  Trust:   0.0000 (irrecoverable)")
+    print(f"  Token:   {token.token_id}")
+    print(f"  Status:  {_colored('BURNED — permanently blacklisted', C.RED + C.BOLD)}")
+
+
 def cmd_agent_reinstate(args):
     """Reinstate an isolated agent."""
     fw, storage = _load_firewall(args.storage_dir)
@@ -426,8 +431,9 @@ def cmd_agent_reinstate(args):
         print(_error(f"Agent not found: {args.name}"))
         return 1
 
-    if agent.state != AgentIdentity.__class__:
-        pass  # Just reinstate
+    if agent.is_burned:
+        print(_colored(f"DENIED: Agent {args.name} is BURNED — reinstatement not possible", C.RED + C.BOLD))
+        return 1
 
     token = fw.reinstate(agent)
     _save_state(fw, storage)
@@ -478,6 +484,19 @@ def _trust_bar(score: float, width: int = 20) -> str:
         return f"{color}{'█' * filled}{'░' * empty}{C.RESET}"
     else:
         return f"[{'#' * filled}{'.' * empty}]"
+
+
+def _state_colored(state: str) -> str:
+    """Color-code an agent state string."""
+    if state == "active":
+        return _success(state)
+    elif state == "degraded":
+        return _warn(state)
+    elif state == "isolated":
+        return _error(state)
+    elif state == "burned":
+        return _colored(f"BURNED", C.RED + C.BOLD)
+    return _dim(state)
 
 
 def _action_colored(action: str) -> str:
@@ -564,6 +583,10 @@ def build_parser() -> argparse.ArgumentParser:
     agent_iso.add_argument("name", help="Agent name")
     agent_iso.add_argument("reason", nargs="?", default=None, help="Isolation reason")
 
+    agent_burn = agent_sub.add_parser("burn", help="Permanently burn an agent (irrecoverable)", parents=[parent])
+    agent_burn.add_argument("name", help="Agent name")
+    agent_burn.add_argument("reason", nargs="?", default=None, help="Burn reason")
+
     agent_re = agent_sub.add_parser("reinstate", help="Reinstate an isolated agent", parents=[parent])
     agent_re.add_argument("name", help="Agent name")
 
@@ -628,6 +651,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_agent_show(args) or 0
         elif args.agent_command == "isolate":
             return cmd_agent_isolate(args) or 0
+        elif args.agent_command == "burn":
+            return cmd_agent_burn(args) or 0
         elif args.agent_command == "reinstate":
             return cmd_agent_reinstate(args) or 0
         else:
