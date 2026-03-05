@@ -183,6 +183,53 @@ assert fw.provenance.verify(token)
 chain = fw.provenance.export()
 ```
 
+## BYOA Trust-Gating: Agent Access Control
+
+When an external AI agent (Bring Your Own Agent) wants access to your internal APIs, the route goes through SNAFT + JIS + TIBET. Not a credential check — a behavioral contract with dynamic scope.
+
+```mermaid
+sequenceDiagram
+    participant Agent as External AI Agent (BYOA)
+    participant SNAFT as SNAFT Trust Kernel
+    participant API as Internal Product API
+    participant Logs as TIBET Audit Trail
+
+    Note over Agent, SNAFT: 1. JIS Handshake (Intent)
+    Agent->>SNAFT: Request Access (Intent: "Read Inventory for Q3")
+
+    Note over SNAFT: 2. FIR/A Scoring & Scoping
+    SNAFT->>SNAFT: Check Memory (History: Trust 0.1)
+
+    Note over SNAFT, Agent: 3. Token Issuance (Lease)
+    SNAFT-->>Agent: Issue TIBET Token (Lease: 5m, Scope: 10 records)
+
+    Note over Agent, API: 4. Provenance-based Execution
+    Agent->>API: API Call + TIBET Token
+
+    Note over API: 5. Inline Validation
+    API->>API: Validate Token Signature & Scope
+
+    alt Within Scope
+        API-->>Agent: Data Return (Limited Results)
+        API->>SNAFT: Report: "Behavior OK" (+0.02 Trust)
+    else Out of Scope (Anomaly)
+        API->>SNAFT: Alert: "Unauthorized Access Attempt"
+        SNAFT->>SNAFT: Drop Trust to 0.0 & Blacklist
+        API-->>Agent: Connection Dropped (SNAFT-003)
+        SNAFT->>Logs: Log Evidence of Deviation (Immutable)
+    end
+```
+
+**Key properties:**
+
+- **Intent-first** — agent must declare *why* before getting *what*
+- **Dynamic scope** — trust 0.1 = 10 records, trust 0.7 = full dataset, trust 0.95 = real-time stream
+- **Short leases** — low trust = 5 min token, high trust = 1 hour. Forces re-validation.
+- **Immunological response** — anomaly triggers instant isolation across all nodes
+- **Federated blacklist** — block token propagates as TIBET chain link to all SNAFT instances
+
+This is **Agent Access Control (AAC)** — zero-trust architecture for AI agents, with behavioral memory that traditional ZTA doesn't have.
+
 ## Design Principles
 
 1. **Default DENY** — no rule match = blocked
@@ -213,6 +260,6 @@ MIT
 
 ## Credits
 
-Built by [Jasper van de Meent](https://github.com/jaspertvdm) as part of [HumoticaOS](https://humotica.nl).
+Built by [Jasper van de Meent](https://github.com/jaspertvdm) as part of [HumoticaOS](https://humotica.com).
 
 Based on OWASP LLM Top 10, TIBET provenance framework, and the 1995 *Principles of Tradecraft*.
