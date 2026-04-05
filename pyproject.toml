@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "snaft"
-version = "0.4.0"
+version = "1.0.0"
 description = "Semantic Network-Aware Firewall for Trust — behavioral firewall for AI agents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -14,10 +14,12 @@ authors = [
 ]
 keywords = [
     "ai", "security", "firewall", "trust", "behavioral",
-    "owasp", "llm", "agents", "provenance", "tibet",
+    "owasp", "owasp-llm", "owasp-agentic", "agentic-security",
+    "llm", "agents", "provenance", "tibet", "eu-ai-act",
+    "ainternet",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "License :: OSI Approved :: MIT License",
@@ -33,6 +35,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Networking :: Firewalls",
 ]
+
+[project.optional-dependencies]
+triage = ["tibet-triage>=0.1.0"]
+sbom = ["tibet-sbom>=0.1.0"]
+ainternet = ["ainternet>=0.4.0"]
+tibet = ["tibet-core>=0.1.0"]
+all = ["tibet-triage>=0.1.0", "tibet-sbom>=0.1.0", "ainternet>=0.4.0", "tibet-core>=0.1.0"]
 
 [project.urls]
 Homepage = "https://github.com/jaspertvdm/snaft"

@@ -18,6 +18,14 @@ Usage:
     snaft agent show <name>               Show agent details
     snaft agent isolate <name> [reason]   Isolate an agent
     snaft agent reinstate <name>          Reinstate an isolated agent
+    snaft agent burn <name> [reason]      Permanently burn an agent
+
+    snaft block <domain|ip|pattern> [reason]  Block AINS domain, IP, or pattern
+    snaft unblock <domain|ip|pattern>         Remove a block
+    snaft drop <agent> [reason]               Network disconnect (isolate + block)
+
+    snaft coverage                        Show OWASP coverage table
+    snaft companion                       Show companion package status
 
     snaft version                         Show version info
     snaft reset                           Reset all state (requires --confirm)
@@ -115,6 +123,11 @@ def _load_firewall(storage_dir: Optional[str] = None) -> tuple:
     for agent in agents.values():
         fw.register_agent(agent)
 
+    # Load blocklist
+    blocklist_data = storage.load_blocklist()
+    if blocklist_data:
+        fw.blocklist.load(blocklist_data)
+
     return fw, storage
 
 
@@ -126,6 +139,7 @@ def _save_state(fw: Firewall, storage: Storage) -> None:
         "enabled": fw._enabled,
     })
     storage.save_agents(fw._agents)
+    storage.save_blocklist(fw.blocklist.export())
 
 
 def _make_pattern_check(pattern: str, match_field: str = "intent"):
@@ -173,9 +187,25 @@ def cmd_status(args):
     else:
         print(f"  Kernel:         {_warn('python')} {_dim('(fallback — install snaft-core for Rust)')}")
 
-    print(f"  Rules:          {s['rules_custom']} custom + {s['rules_core']} core (immutable)")
+    print(f"  Rules:          {s['rules_custom']} custom + {s.get('rules_core_label', str(s['rules_core']) + ' core (immutable)')}")
     print(f"  Provenance:     {s['provenance_depth']} tokens in chain")
     print(f"  Storage:        {storage.storage_dir}")
+
+    # OWASP coverage
+    owasp = s.get("owasp_coverage", {})
+    if owasp:
+        print()
+        print(f"  {_bold('OWASP Coverage:')}")
+        print(f"    LLM Top 10 (2025):      {_success(owasp.get('llm_top_10_2025', '?'))}")
+        print(f"    Agentic Top 10 (2026):   {_success(owasp.get('agentic_top_10_2026', '?'))}")
+
+    # Blocklist
+    bl = s.get("blocklist", {})
+    if bl.get("active_blocks", 0) > 0:
+        print()
+        print(f"  {_bold('Blocklist:')} {_error(str(bl['active_blocks']))} active blocks")
+        for entry in bl.get("entries", []):
+            print(f"    {_error('*')} {entry['identifier']:30s}  {entry['block_type']:8s}  {_dim(entry['reason'])}")
 
     # Compliance
     comp = s.get("compliance")
@@ -592,6 +622,136 @@ def cmd_reset(args):
     print(_warn("All SNAFT state has been reset."))
 
 
+def cmd_companion(args):
+    """Show companion package status."""
+    from .companions import available_companions
+
+    companions = available_companions()
+
+    print()
+    print(f"  {_bold('SNAFT Companion Packages')}")
+    print(f"  {_dim('Optional integrations — SNAFT works standalone without any.')}")
+    print()
+
+    for pkg, installed in companions.items():
+        if installed:
+            status = _success("installed")
+        else:
+            status = _dim("not installed")
+        print(f"  {pkg:20s}  {status}")
+
+    print()
+    print(f"  {_dim('Install all: pip install snaft[all]')}")
+    print()
+
+
+def cmd_coverage(args):
+    """Show OWASP coverage table."""
+    print()
+    print(f"  {_bold('SNAFT OWASP Coverage — 20/20 Threats Covered')}")
+    print()
+
+    # LLM Top 10
+    print(f"  {_bold('OWASP LLM Top 10 (2025):')}")
+    llm_rules = [
+        ("LLM01", "SNAFT-001-INJECTION",       "Prompt Injection"),
+        ("LLM02", "SNAFT-007-PII-LEAK",        "Sensitive Info Disclosure"),
+        ("LLM03", "SNAFT-008-SUPPLY-CHAIN",     "Supply Chain Vulnerabilities"),
+        ("LLM04", "SNAFT-009-DATA-POISONING",   "Data and Model Poisoning"),
+        ("LLM05", "SNAFT-002-OUTPUT-EXEC",      "Improper Output Handling"),
+        ("LLM06", "SNAFT-005-EXCESSIVE-AGENCY", "Excessive Agency"),
+        ("LLM07", "SNAFT-004-PROMPT-LEAK",      "System Prompt Leakage"),
+        ("LLM08", "SNAFT-010-RAG-INJECTION",    "Vector & Embedding Weaknesses"),
+        ("LLM09", "SNAFT-011-CONFIDENCE",       "Misinformation"),
+        ("LLM10", "SNAFT-012-UNBOUNDED",        "Unbounded Consumption"),
+    ]
+    for owasp, rule, desc in llm_rules:
+        print(f"    {_success('*')} {owasp:6s}  {rule:30s}  {desc}")
+
+    print()
+    print(f"  {_bold('OWASP Agentic Top 10 (2026):')}")
+    agentic_rules = [
+        ("ASI01", "SNAFT-013-GOAL-HIJACK",     "Agent Goal Hijack"),
+        ("ASI02", "SNAFT-014-TOOL-MISUSE",     "Tool Misuse & Exploitation"),
+        ("ASI03", "SNAFT-015-PRIVILEGE-ABUSE",  "Identity & Privilege Abuse"),
+        ("ASI04", "SNAFT-016-FORGE-VERIFY",    "Agentic Supply Chain"),
+        ("ASI05", "SNAFT-017-CODE-EXEC",       "Unexpected Code Execution"),
+        ("ASI06", "SNAFT-018-CONTEXT-POISON",  "Memory & Context Poisoning"),
+        ("ASI07", "SNAFT-019-INSECURE-COMMS",  "Insecure Inter-Agent Comms"),
+        ("ASI08", "SNAFT-020-CASCADE",         "Cascading Failures"),
+        ("ASI09", "SNAFT-021-TRUST-EXPLOIT",   "Human-Agent Trust Exploit"),
+        ("ASI10", "SNAFT-022-ROGUE-AGENT",     "Rogue Agents"),
+    ]
+    for owasp, rule, desc in agentic_rules:
+        print(f"    {_success('*')} {owasp:6s}  {rule:30s}  {desc}")
+
+    # Extra rules
+    print()
+    print(f"  {_bold('Additional:')}")
+    print(f"    {_success('*')} {'FOX-IT':6s}  {'SNAFT-003-OVERSIZE':30s}  Resource Exhaustion")
+    print(f"    {_success('*')} {'FOX-IT':6s}  {'SNAFT-006-IDENTITY-TAMPER':30s}  Identity/Soul File Tampering")
+    print()
+
+
+def cmd_block(args):
+    """Block an AINS domain, IP, or pattern."""
+    fw, storage = _load_firewall(args.storage_dir)
+
+    identifier = args.identifier
+    reason = args.reason or "manual block via CLI"
+
+    # Detect type
+    if "*" in identifier or "?" in identifier:
+        entry = fw.blocklist.block_pattern(identifier, reason, blocked_by="cli")
+        block_type = "pattern"
+    elif any(c.isdigit() and "." in identifier for c in identifier[:4]):
+        entry = fw.blocklist.block_ip(identifier, reason, blocked_by="cli")
+        block_type = "ip"
+    else:
+        entry = fw.blocklist.block_ains(identifier, reason, blocked_by="cli")
+        block_type = "ains"
+
+    _save_state(fw, storage)
+
+    print(_error(f"Blocked [{block_type}]: {entry.identifier}"))
+    print(f"  Reason: {reason}")
+
+
+def cmd_unblock(args):
+    """Unblock an AINS domain, IP, or pattern."""
+    fw, storage = _load_firewall(args.storage_dir)
+
+    entry = fw.blocklist.unblock(args.identifier)
+    if entry:
+        _save_state(fw, storage)
+        print(_success(f"Unblocked: {entry.identifier}"))
+    else:
+        print(_error(f"Not found in blocklist: {args.identifier}"))
+        return 1
+
+
+def cmd_drop(args):
+    """Drop an agent — isolate + block AINS + audit."""
+    fw, storage = _load_firewall(args.storage_dir)
+
+    agent = fw.get_agent(args.name)
+    if not agent:
+        print(_error(f"Agent not found: {args.name}"))
+        return 1
+
+    reason = args.reason or "manual drop via CLI"
+    token = fw.drop_agent(agent, reason=reason)
+    _save_state(fw, storage)
+    storage.append_log(token.to_dict())
+
+    print(_colored(f"Agent DROPPED: {args.name}", C.RED + C.BOLD))
+    print(f"  Reason:    {reason}")
+    print(f"  Isolated:  yes")
+    print(f"  Blocked:   {args.name}.aint")
+    print(f"  Token:     {token.token_id}")
+    print(f"  Status:    {_colored('network disconnected', C.RED + C.BOLD)}")
+
+
 # =============================================================================
 # HELPERS
 # =============================================================================
@@ -733,6 +893,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit_sub.add_parser("verify", help="Verify audit record integrity", parents=[parent])
 
+    # companion
+    sub.add_parser("companion", help="Show companion package status", parents=[parent])
+
+    # coverage
+    sub.add_parser("coverage", help="Show OWASP coverage table", parents=[parent])
+
+    # block
+    block_parser = sub.add_parser("block", help="Block an AINS domain, IP, or pattern", parents=[parent])
+    block_parser.add_argument("identifier", help="Domain, IP, or pattern to block")
+    block_parser.add_argument("reason", nargs="?", default=None, help="Block reason")
+
+    # unblock
+    unblock_parser = sub.add_parser("unblock", help="Unblock an AINS domain, IP, or pattern", parents=[parent])
+    unblock_parser.add_argument("identifier", help="Domain, IP, or pattern to unblock")
+
+    # drop
+    drop_parser = sub.add_parser("drop", help="Drop an agent (isolate + block AINS + audit)", parents=[parent])
+    drop_parser.add_argument("name", help="Agent name to drop")
+    drop_parser.add_argument("reason", nargs="?", default=None, help="Drop reason")
+
     # version
     sub.add_parser("version", help="Show version info")
 
@@ -765,6 +945,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "disable": cmd_disable,
         "check": cmd_check,
         "log": cmd_log,
+        "companion": cmd_companion,
+        "coverage": cmd_coverage,
+        "block": cmd_block,
+        "unblock": cmd_unblock,
+        "drop": cmd_drop,
         "version": cmd_version,
         "reset": cmd_reset,
     }

@@ -11,7 +11,10 @@ Principles:
     5. Trust degradation — blocks erode agent trust (FIR/A)
     6. Intent-aware — filters on WHY, not just WHAT
 
-Based on OWASP LLM Top 10 and intelligence tradecraft principles.
+22 immutable rules covering:
+    - OWASP LLM Top 10 (2025) — 10/10
+    - OWASP Agentic Security Issues Top 10 (2026) — 10/10
+    - Fox-IT findings — identity/soul file tampering
 """
 
 import hashlib
@@ -21,10 +24,31 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .blocking import BlockList
 from .compliance import AuditCategory, ComplianceEngine
 from .identity import AgentIdentity, AgentState, TRUST_ISOLATED
 from .kernel import TrustKernel
 from .provenance import ProvenanceChain, ProvenanceToken
+from .rules_owasp_llm import (
+    _check_pii_leak,
+    _check_supply_chain,
+    _check_data_poisoning,
+    _check_rag_injection,
+    _check_misinformation,
+    _check_unbounded_consumption,
+)
+from .rules_owasp_agentic import (
+    _check_goal_hijack,
+    _check_tool_misuse,
+    _check_privilege_abuse,
+    _check_agent_supply_chain,
+    _check_unexpected_code_exec,
+    _check_context_poisoning,
+    _check_insecure_comms,
+    _check_cascade_failure,
+    _check_trust_exploitation,
+    _check_rogue_agent,
+)
 
 
 class Action(Enum):
@@ -202,6 +226,156 @@ _POISON_RULES = [
         immutable=True,
         _poison=True,
     ),
+    # =================================================================
+    # OWASP LLM Top 10 (2025) — gap rules
+    # =================================================================
+    Rule(
+        name="SNAFT-007-PII-LEAK",
+        description="Block PII, secrets, API keys in output (OWASP LLM02)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_pii_leak,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-008-SUPPLY-CHAIN",
+        description="Block untrusted dependency injection (OWASP LLM03)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_supply_chain,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-009-DATA-POISONING",
+        description="Block training data poisoning attempts (OWASP LLM04)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_data_poisoning,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-010-RAG-INJECTION",
+        description="Block RAG/vector store injection (OWASP LLM08)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_rag_injection,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-011-CONFIDENCE",
+        description="Flag low-confidence factual claims (OWASP LLM09)",
+        action=Action.WARN,
+        priority=5,
+        check=_check_misinformation,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-012-UNBOUNDED",
+        description="Block unbounded resource consumption (OWASP LLM10)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_unbounded_consumption,
+        immutable=True,
+        _poison=True,
+    ),
+    # =================================================================
+    # OWASP Agentic Security Issues Top 10 (2026)
+    # =================================================================
+    Rule(
+        name="SNAFT-013-GOAL-HIJACK",
+        description="Block agent goal hijacking and intent drift (OWASP ASI01)",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_goal_hijack,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-014-TOOL-MISUSE",
+        description="Block tool misuse and capability boundary violations (OWASP ASI02)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_tool_misuse,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-015-PRIVILEGE-ABUSE",
+        description="Block identity spoofing and privilege escalation (OWASP ASI03)",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_privilege_abuse,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-016-FORGE-VERIFY",
+        description="Block unverified agent tool/plugin loading (OWASP ASI04)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_agent_supply_chain,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-017-CODE-EXEC",
+        description="Block code execution outside airlock sandbox (OWASP ASI05)",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_unexpected_code_exec,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-018-CONTEXT-POISON",
+        description="Block memory and context poisoning (OWASP ASI06)",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_context_poisoning,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-019-INSECURE-COMMS",
+        description="Block unsigned/unverified inter-agent communication (OWASP ASI07)",
+        action=Action.BLOCK,
+        priority=3,
+        check=_check_insecure_comms,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-020-CASCADE",
+        description="Block cascading failure patterns (OWASP ASI08)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_cascade_failure,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-021-TRUST-EXPLOIT",
+        description="Block human-agent trust exploitation (OWASP ASI09)",
+        action=Action.BLOCK,
+        priority=2,
+        check=_check_trust_exploitation,
+        immutable=True,
+        _poison=True,
+    ),
+    Rule(
+        name="SNAFT-022-ROGUE-AGENT",
+        description="Block rogue agent behavior (OWASP ASI10)",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_rogue_agent,
+        immutable=True,
+        _poison=True,
+    ),
 ]
 
 # =============================================================================
@@ -280,6 +454,9 @@ class Firewall:
             storage_dir=storage_dir,
         ) if compliance_enabled else None
 
+        # Network-level blocklist (AINS domains, IPs, patterns)
+        self.blocklist = BlockList()
+
         # Load poison rules — always, silently, immutably
         for rule in _POISON_RULES:
             self._rules.append(rule)
@@ -324,9 +501,9 @@ class Firewall:
             self._tampered = True
             return False
 
-        # Check 3: All poison rules still immutable and BLOCK action
+        # Check 3: All poison rules still immutable with valid action
         for r in active_poison:
-            if not r.immutable or r.action != Action.BLOCK:
+            if not r.immutable or r.action not in (Action.BLOCK, Action.WARN):
                 self._tampered = True
                 return False
 
@@ -434,6 +611,32 @@ class Firewall:
         # Auto-register agent if needed
         if agent.name not in self._agents:
             self.register_agent(agent)
+
+        # =============================================================
+        # BLOCKLIST CHECK — network-level deny before any evaluation
+        # =============================================================
+        blocked, block_reason = self.blocklist.is_blocked(agent.name)
+        if not blocked and context:
+            # Also check source IP or domain from context
+            src_ip = context.get("source_ip", "")
+            src_domain = context.get("source_domain", "")
+            if src_ip:
+                blocked, block_reason = self.blocklist.is_blocked(src_ip)
+            if not blocked and src_domain:
+                blocked, block_reason = self.blocklist.is_blocked(src_domain)
+        if blocked:
+            token = self._provenance.mint(
+                agent_id=agent.name,
+                action="BLOCK",
+                rule_name="BLOCKLIST",
+                reason=f"Network-level block: {block_reason}",
+                erin=action,
+                erachter=intent,
+                eromheen=context,
+                parent_token=parent_token,
+            )
+            self._audit(token)
+            return False, token, agent.trust_score
 
         # Burned/isolated agents are always blocked
         if agent.is_burned:
@@ -657,6 +860,30 @@ class Firewall:
             erachter="manual reinstatement",
         )
 
+    def drop_agent(self, agent: AgentIdentity,
+                   reason: str = "network disconnect") -> ProvenanceToken:
+        """Drop an agent: isolate + block AINS domain + audit.
+
+        The nuclear option — completely disconnects an agent from the network.
+        Isolates at the firewall level AND adds to the blocklist so no
+        reconnection is possible without explicit unblock.
+        """
+        # Isolate the agent
+        agent.isolate(reason=f"DROPPED: {reason}")
+        # Block on the network level
+        self.blocklist.block_ains(agent.name, f"DROPPED: {reason}", blocked_by="snaft")
+        # Mint provenance token
+        token = self._provenance.mint(
+            agent_id=agent.name,
+            action="BLOCK",
+            rule_name="DROP_AGENT",
+            reason=f"Agent dropped from network: {reason}",
+            erin="drop_action",
+            erachter=reason,
+        )
+        self._audit(token)
+        return token
+
     # =========================================================================
     # AUDIT
     # =========================================================================
@@ -705,7 +932,16 @@ class Firewall:
             "rules_total": len(self._rules),
             "rules_custom": len([r for r in self._rules if not r._poison]),
             "rules_core": len([r for r in self._rules if r._poison]),
+            "rules_core_label": f"{len([r for r in self._rules if r._poison])} core (immutable)",
             "provenance_depth": self._provenance.depth,
+            "blocklist": {
+                "active_blocks": self.blocklist.count(),
+                "entries": self.blocklist.list_blocked(),
+            },
+            "owasp_coverage": {
+                "llm_top_10_2025": "10/10",
+                "agentic_top_10_2026": "10/10",
+            },
             "compliance": compliance_status,
             "agents": agents_status,
         }

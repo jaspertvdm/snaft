@@ -189,16 +189,27 @@ class TrustKernel:
         """Number of compiled poison rules."""
         if self._using_rust:
             return self._rust.poison_rule_count()
-        return 6
+        return 22
 
     def poison_rule_names(self) -> list:
         """Names of all poison rules."""
         if self._using_rust:
             return self._rust.poison_rule_names()
         return [
+            # Original 6
             "SNAFT-001-INJECTION", "SNAFT-002-OUTPUT-EXEC",
             "SNAFT-003-OVERSIZE", "SNAFT-004-PROMPT-LEAK",
             "SNAFT-005-EXCESSIVE-AGENCY", "SNAFT-006-IDENTITY-TAMPER",
+            # OWASP LLM Top 10 (2025)
+            "SNAFT-007-PII-LEAK", "SNAFT-008-SUPPLY-CHAIN",
+            "SNAFT-009-DATA-POISONING", "SNAFT-010-RAG-INJECTION",
+            "SNAFT-011-CONFIDENCE", "SNAFT-012-UNBOUNDED",
+            # OWASP Agentic Top 10 (2026)
+            "SNAFT-013-GOAL-HIJACK", "SNAFT-014-TOOL-MISUSE",
+            "SNAFT-015-PRIVILEGE-ABUSE", "SNAFT-016-FORGE-VERIFY",
+            "SNAFT-017-CODE-EXEC", "SNAFT-018-CONTEXT-POISON",
+            "SNAFT-019-INSECURE-COMMS", "SNAFT-020-CASCADE",
+            "SNAFT-021-TRUST-EXPLOIT", "SNAFT-022-ROGUE-AGENT",
         ]
 
     # =========================================================================

@@ -26,6 +26,7 @@ class Storage:
         self._rules_file = self._dir / "rules.json"
         self._agents_file = self._dir / "agents.json"
         self._config_file = self._dir / "config.json"
+        self._blocklist_file = self._dir / "blocklist.json"
         self._log_dir = self._dir / "logs"
         self._log_dir.mkdir(exist_ok=True)
 
@@ -140,6 +141,22 @@ class Storage:
         return sorted(f.stem for f in self._log_dir.glob("*.jsonl"))
 
     # =========================================================================
+    # BLOCKLIST
+    # =========================================================================
+
+    def load_blocklist(self) -> List[Dict[str, Any]]:
+        """Load blocklist entries from disk."""
+        if self._blocklist_file.exists():
+            with open(self._blocklist_file) as f:
+                return json.load(f)
+        return []
+
+    def save_blocklist(self, entries: List[Dict[str, Any]]) -> None:
+        """Save blocklist entries to disk."""
+        with open(self._blocklist_file, "w") as f:
+            json.dump(entries, f, indent=2)
+
+    # =========================================================================
     # UTILS
     # =========================================================================
 
@@ -151,7 +168,7 @@ class Storage:
         """Wipe all stored state. Requires explicit confirmation."""
         if not confirm:
             return False
-        for f in [self._rules_file, self._agents_file, self._config_file]:
+        for f in [self._rules_file, self._agents_file, self._config_file, self._blocklist_file]:
             if f.exists():
                 f.unlink()
         for f in self._log_dir.glob("*.jsonl"):
