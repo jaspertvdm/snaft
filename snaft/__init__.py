@@ -33,7 +33,7 @@ Or with full agent identity:
     allowed, token, trust = fw.evaluate(agent, "read_file", "load config")
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .blocking import BlockList
 from .companions import available_companions
@@ -49,7 +49,9 @@ from .identity import (
     TRUST_ISOLATED,
 )
 from .kernel import TrustKernel
+from .normalize import normalize, normalize_confusables, strip_dangerous_chars
 from .provenance import ProvenanceChain, ProvenanceToken
+from .rules_injection import check_injection
 from .storage import Storage
 
 __all__ = [
@@ -61,6 +63,12 @@ __all__ = [
     "BlockList",
     # Trust Kernel
     "TrustKernel",
+    # Normalization (anti-bypass)
+    "normalize",
+    "normalize_confusables",
+    "strip_dangerous_chars",
+    # Injection detection
+    "check_injection",
     # Identity
     "AgentIdentity",
     "AgentState",
