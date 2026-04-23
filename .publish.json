@@ -1,0 +1,33 @@
+{
+  "package": "snaft",
+  "registries": {
+    "pypi": {
+      "url": "https://pypi.org/project/snaft/",
+      "version": "1.2.0",
+      "deprecated": false
+    },
+    "github": {
+      "url": "https://github.com/jaspertvdm/snaft",
+      "remote": "https://github.com/jaspertvdm/snaft.git",
+      "tag": "v1.2.0"
+    },
+    "docker": {
+      "url": "https://hub.docker.com/r/humotica/snaft",
+      "image": "humotica/snaft:1.2.0",
+      "latest": "humotica/snaft:latest"
+    }
+  },
+  "publish": {
+    "pypi": {
+      "command": "cd /srv/jtel-stack/packages/snaft && python3 -m build && python3 -m twine upload dist/snaft-<version>*",
+      "auth": "~/.pypirc [pypi] token"
+    },
+    "docker": {
+      "command": "docker build -t humotica/snaft:<version> -t humotica/snaft:latest . && docker push humotica/snaft:<version> && docker push humotica/snaft:latest",
+      "auth": "dockerhub login as humotica"
+    },
+    "github": {
+      "command": "git push origin main && git push origin v<version>"
+    }
+  }
+}
