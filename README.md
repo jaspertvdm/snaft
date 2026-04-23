@@ -135,6 +135,33 @@ snaft unblock evil.aint
 snaft drop rogue-agent "unauthorized access"
 ```
 
+## Null-Route MUX
+
+Behavioral detection engine for abnormal traffic. When an IP crosses a dual threshold — rate (sliding window) or path repetition — it is marked for null-routing. The adjacent ASGI/Express middleware then holds the connection open and sends nothing. The attacker's connection pool fills up. You absorb the request metadata; they get zero signal (no status code, no error, no timing leak).
+
+```python
+from snaft import NullRouteMux
+
+mux = NullRouteMux(
+    rate_threshold=15,        # requests per window
+    window_seconds=10,        # sliding window size
+    repetition_threshold=5,   # same path in last N
+    hold_duration=120,        # seconds to silence
+)
+
+decision = mux.check("185.131.15.134", "/api/lookup", "GET")
+
+if decision.should_null_route:
+    mux.absorb(ip, path, method, headers, body)   # we learn, they don't
+    # middleware: send(http.response.start) then sleep hold_duration, never send body
+
+mux.metrics()            # global counters + top offenders
+mux.get_absorbed_summary("185.131.15.134")
+mux.release("185.131.15.134")   # manual un-route
+```
+
+Whitelist is built in for localhost, internal LANs, and declared operator IPs — whitelisted traffic is never null-routed. FIR/A is penalised on trigger so repeat offenders degrade faster. Designed for defensive use in production and for active engagements against automated probing swarms.
+
 ## Companion Packages (optional)
 
 SNAFT works standalone with zero dependencies. Install companions for enhanced checks:
@@ -205,3 +232,18 @@ MIT
 Built by [Jasper van de Meent](https://github.com/jaspertvdm) as part of [HumoticaOS](https://humotica.com).
 
 Based on OWASP LLM Top 10 (2025), OWASP Agentic Top 10 (2026), TIBET provenance framework, and the AInternet.
+
+
+---
+
+## Enterprise
+
+For private hub hosting, SLA support, custom integrations, or compliance guidance:
+
+| | |
+|---|---|
+| **Enterprise** | enterprise@humotica.com |
+| **Support** | support@humotica.com |
+| **Security** | security@humotica.com |
+
+See [ENTERPRISE.md](ENTERPRISE.md) for details.
