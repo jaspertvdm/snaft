@@ -33,7 +33,7 @@ Or with full agent identity:
     allowed, token, trust = fw.evaluate(agent, "read_file", "load config")
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 from .blocking import BlockList
 from .companions import available_companions
@@ -52,6 +52,13 @@ from .kernel import TrustKernel
 from .normalize import normalize, normalize_confusables, strip_dangerous_chars
 from .provenance import ProvenanceChain, ProvenanceToken
 from .rules_injection import check_injection
+from .rules_encoded_injection import check_encoded_injection
+from .encoded_decoder import (
+    detect_encoding,
+    is_printable_text,
+    magic_bytes_detect,
+    recursive_decode,
+)
 from .mux import NullRouteMux, NullRouteDecision, IPProfile
 from .storage import Storage
 
@@ -70,6 +77,12 @@ __all__ = [
     "strip_dangerous_chars",
     # Injection detection
     "check_injection",
+    # Storm Discovery: encoded payload injection (SNAFT-023)
+    "check_encoded_injection",
+    "detect_encoding",
+    "is_printable_text",
+    "magic_bytes_detect",
+    "recursive_decode",
     # Identity
     "AgentIdentity",
     "AgentState",

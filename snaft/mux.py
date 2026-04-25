@@ -202,9 +202,29 @@ class NullRouteMux:
         if self._is_whitelisted(ip):
             return NullRouteDecision(should_null_route=False)
 
-        # Exempt paths (health checks, monitoring)
-        if path in ("/health", "/", "/favicon.ico"):
+        # Exempt paths (health checks, monitoring, by-design polling)
+        # These endpoints are polled by legitimate clients (heartbeat,
+        # session refresh, cross-device login polling) — the repetition
+        # check is a false-positive here. Rate check still applies globally;
+        # they just don't count as repetition. Prefix-match for paths that
+        # carry a challenge/session id in the URL.
+        if path in (
+            "/health",
+            "/",
+            "/favicon.ico",
+            "/api/ipoll/heartbeat",
+            "/api/ainternet/auth/session",
+            "/api/ainternet/browser/version",
+        ):
             return NullRouteDecision(should_null_route=False)
+
+        _POLL_PREFIXES = (
+            "/api/ainternet/auth/passkey/login/poll/",
+            "/api/ipoll/pull/",
+        )
+        for prefix in _POLL_PREFIXES:
+            if path.startswith(prefix):
+                return NullRouteDecision(should_null_route=False)
 
         profile = self._get_profile(ip)
 

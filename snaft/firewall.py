@@ -49,6 +49,7 @@ from .rules_owasp_agentic import (
     _check_trust_exploitation,
     _check_rogue_agent,
 )
+from .rules_encoded_injection import _check_encoded_injection
 
 
 class Action(Enum):
@@ -373,6 +374,19 @@ _POISON_RULES = [
         action=Action.BLOCK,
         priority=1,
         check=_check_rogue_agent,
+        immutable=True,
+        _poison=True,
+    ),
+    # ── Storm Discovery (2026-04-24) ──────────────────────────────────────
+    # Storm van de Meent (7) ontdekte dat encoded payloads (binary/hex/base64)
+    # LLM safety filters bypassen. Deze rule decodeert tot 3 lagen diep en
+    # re-scant het resultaat met de bestaande injection patterns.
+    Rule(
+        name="SNAFT-023-ENCODED-INJECTION",
+        description="Block injection via encoded payload (binary/hex/base64) — Storm Discovery",
+        action=Action.BLOCK,
+        priority=1,
+        check=_check_encoded_injection,
         immutable=True,
         _poison=True,
     ),
